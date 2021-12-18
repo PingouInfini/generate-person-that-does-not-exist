@@ -11,10 +11,13 @@ import javax.imageio.stream.ImageOutputStream;
 import java.awt.image.BufferedImage;
 import java.io.*;
 import java.net.URL;
+import java.sql.*;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public class Generator {
 
@@ -22,8 +25,8 @@ public class Generator {
         HelpFormatter formatter = new HelpFormatter();
         Options options = new Options();
         options.addOption("help", false, "Affichage de l'aide.")
-                .addOption("n", "number", true, "Nombre de photos a generer")
-                .addOption("q", "quality", true, "Qualité entre 0.0 et 1.0")
+                .addOption("n", "number", true, "Nombre de photos a generer [defaut:1]")
+                .addOption("q", "quality", true, "Qualité entre 0.0 et 1.0 (impact la taille du fichier) [defaut:0.5]")
                 .addOption("o", "output", true, "[REQUIRED] Spécifier un répertoire de sortie");
 
         final CommandLineParser parser = new BasicParser();
@@ -67,13 +70,71 @@ public class Generator {
         String imageUrl = "https://thispersondoesnotexist.com/image";
 
         Set<String> md5SetOfFiles = new HashSet<>();
-        for (int i = 0; i < numberOfPhotos; i++) {
+        char[] animationChars = new char[]{'|', '/', '-', '\\'};
+
+        for (int i = 0; i <= numberOfPhotos; i++) {
+            System.out.print("Processing: " + (i*100)/numberOfPhotos + "% " + animationChars[i % 4] + "\r");
+
             String md5 = saveImage(imageUrl, destinationDirectory + "/" + i + ".png", quality, md5SetOfFiles);
             if (md5 == null)
                 i--;
             else
                 md5SetOfFiles.add(md5);
             TimeUnit.MILLISECONDS.sleep(500);
+        }
+
+        System.out.println("Processing: Done!");
+    }
+
+
+    private static void writeFileFromDatabase() {
+        String url = "jdbc:postgresql://localhost:5432/facereco";
+        String user = "facereco";
+        String password = "facereco";
+
+        try (Connection con = DriverManager.getConnection(url, user, password);
+             Statement st = con.createStatement();
+             ResultSet rs = st.executeQuery("SELECT * FROM photos")) {
+            int i = 0;
+
+            while (rs.next()) {
+                i++;
+                byte[] myByteArray = rs.getBytes(2);
+                String basefilename = "c:\\temp\\photos\\test-";
+
+                InputStream is = new ByteArrayInputStream(myByteArray);
+                try {
+                    BufferedImage bi = ImageIO.read(is);
+                    writeAsImage(bi, basefilename + "A" + i + ".png", 0.5f);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+
+        } catch (SQLException ex) {
+
+            Logger lgr = Logger.getLogger(Generator.class.getName());
+            lgr.log(Level.SEVERE, ex.getMessage(), ex);
+        }
+    }
+
+
+    private static void insertPhotoInDatabase(byte[] imageToByteARray) {
+        String url = "jdbc:postgresql://localhost:5432/facereco";
+        String user = "facereco";
+        String password = "facereco";
+
+        try {
+            Connection conn = DriverManager.getConnection(url, user, password);
+
+
+            PreparedStatement ps = conn.prepareStatement("INSERT INTO photos (photo) VALUES (?)");
+            ps.setBytes(1, imageToByteARray);
+            ps.executeUpdate();
+            ps.close();
+        } catch (SQLException ex) {
+            Logger lgr = Logger.getLogger(Generator.class.getName());
+            lgr.log(Level.SEVERE, ex.getMessage(), ex);
         }
     }
 
@@ -86,17 +147,32 @@ public class Generator {
         BufferedImage image = ImageIO.read(is);
 
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
-        ImageIO.write(image, "png", bos );
-        String md5 = DigestUtils.md5Hex(bos.toByteArray());
+        ImageIO.write(image, "png", bos);
+        byte[] imageToByteArray = bos.toByteArray();
+
+        /*
+         TODO INSERT in database...
+         insertPhotoInDatabase(imageToByteArray);
+         writeFileFromDatabase();
+        */
+
+        String md5 = DigestUtils.md5Hex(imageToByteArray);
         if (md5SetOfFiles.contains(md5))
             return null;
 
+        writeAsImage(image, output, quality);
+        is.close();
 
+        return md5;
+    }
+
+    private static void writeAsImage(BufferedImage image, String output, float quality) throws IOException {
         Iterator<ImageWriter> writers = ImageIO.getImageWritersByFormatName("jpg");
         if (!writers.hasNext())
             throw new IllegalStateException("No writers found");
 
         ImageWriter writer = writers.next();
+        OutputStream os = new FileOutputStream(output);
         ImageOutputStream ios = ImageIO.createImageOutputStream(os);
         writer.setOutput(ios);
         ImageWriteParam param = writer.getDefaultWriteParam();
@@ -110,11 +186,9 @@ public class Generator {
         writer.write(null, new IIOImage(image, null, null), param);
 
         // close all streams
-        is.close();
         os.close();
         ios.close();
         writer.dispose();
-
-        return md5;
     }
 }
+
