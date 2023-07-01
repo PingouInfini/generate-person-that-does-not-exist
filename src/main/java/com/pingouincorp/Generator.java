@@ -67,7 +67,7 @@ public class Generator {
         if (line.hasOption("number"))
             numberOfPhotos = Integer.valueOf(line.getOptionValue("number"));
 
-        String imageUrl = "https://thispersondoesnotexist.com/image";
+        String imageUrl = "https://thispersondoesnotexist.com";
 
         Set<String> md5SetOfFiles = new HashSet<>();
         char[] animationChars = new char[]{'|', '/', '-', '\\'};
